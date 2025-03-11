@@ -1,25 +1,40 @@
 # Narwal-rqueries
 ## ** Average cost per PO (USD) - Monthly average cost for delivery per PO that have completed last mile delivery within the month**
 
- If you need insights on imports (POs, total invoice values), use the first query.
-✅ If you need accurate cost tracking for deliveries with currency conversion, the second query is better.
+# Delivery Cost Analysis
 
-SELECT 
+## Overview
+This document provides insights into two different SQL queries:
+
+1. **Imports Analysis** - Tracks purchase orders (POs) and total invoice values.
+2. **Delivery Cost Tracking** - Provides accurate cost tracking for deliveries with currency conversion.
+
+## Query 1: Imports Analysis
+
+```sql
+SELECT
     DATE_TRUNC('month', import_timestamp) AS month,
-    COUNT(id) AS total_pos, 
+    COUNT(id) AS total_pos,
     SUM(total_invoice_value) AS total_cost,
     ROUND(AVG(total_invoice_value), 2) AS avg_cost_per_po
 FROM public.imports
-WHERE DATE_PART('month', import_timestamp) = DATE_PART('month', import_timestamp) 
-AND DATE_PART('year', import_timestamp) = DATE_PART('year', import_timestamp) 
+WHERE DATE_PART('month', import_timestamp) = DATE_PART('month', import_timestamp)
+AND DATE_PART('year', import_timestamp) = DATE_PART('year', import_timestamp)
 GROUP BY month
 ORDER BY month;
+```
 
-or
+### Purpose:
+- Extracts monthly data on purchase orders (POs) and total invoice values.
+- Computes total and average cost per PO.
 
-//better one
+---
+
+## Query 2: Delivery Cost Tracking (Recommended)
+
+```sql
 WITH completed_deliveries AS (
-  SELECT 
+  SELECT
     DATE_TRUNC('month', d.latest_event_timestamp) as month,
     d.id as delivery_id
   FROM deliveries d
@@ -29,7 +44,7 @@ WITH completed_deliveries AS (
   AND d.latest_event_timestamp < '2025-04-01'
 ),
 delivery_costs AS (
-  SELECT 
+  SELECT
     cd.month,
     dq.quotation_id,
     -- Convert all costs to USD using approximate exchange rates
@@ -48,7 +63,7 @@ delivery_costs AS (
   JOIN quotation_schedule_fees qsf ON qs.id = qsf.schedule_id
   GROUP BY cd.month, dq.quotation_id
 )
-SELECT 
+SELECT
   month,
   COUNT(DISTINCT quotation_id) as number_of_deliveries,
   SUM(total_cost_usd) as total_cost_usd,
@@ -56,10 +71,18 @@ SELECT
 FROM delivery_costs
 GROUP BY month
 ORDER BY month DESC;
+```
 
+### Purpose:
+- Tracks the number of deliveries per month.
+- Converts delivery costs into **USD** for accurate cost analysis.
+- Calculates total and average cost per delivery.
 
-/*Output*/
+---
 
+## Query Output
+
+```json
 {
     "success": true,
     "data": [
@@ -89,7 +112,9 @@ ORDER BY month DESC;
         }
     ]
 }
+```
 
+---
 
 
 ![image](https://github.com/user-attachments/assets/199fee88-5a08-46f2-a2a3-49ebd927d3db)
@@ -107,7 +132,11 @@ ORDER BY month DESC;
 
 
 ## **Average cost per KG (USD) - Monthly average cost for delivery per PO that have completed last mile delivery within the month**
+# Delivery Cost and Weight Report
 
+## SQL Query
+
+```sql
 WITH completed_deliveries AS (
   SELECT 
     DATE_TRUNC('month', d.latest_event_timestamp) as month,
@@ -160,10 +189,11 @@ JOIN delivery_costs dc ON dw.delivery_id = dc.delivery_id AND dw.month = dc.mont
 WHERE dw.total_weight > 0  -- Exclude deliveries with no weight data
 GROUP BY dw.month
 ORDER BY dw.month DESC;
+```
 
+## Output
 
-/*Output*/
-
+```json
 {
     "success": true,
     "data": [
@@ -194,19 +224,27 @@ ORDER BY dw.month DESC;
             "total_weight_kg": "1341.60",
             "total_cost_usd": "3893.40",
             "avg_cost_per_kg_usd": "2.90"
-        }
+        }...
     ]
 }
+```
 
 ![image](https://github.com/user-attachments/assets/4360ad0c-f862-4ff5-8a54-c239f0947dec)
 
 
 ## **Cargo volumes in CBM - Monthly volume of inbound and outbound cargo in total and also by hub**
+# Shipment Volume Report
 
- If shipments reliably records both import and export activity → Use the second query.
-✅ If imports and exports are managed independently and shipments doesn't always track both → Use the first query.
-/*
-SELECT 
+## Overview
+This project provides SQL queries to calculate monthly shipment volumes based on import and export data. Depending on whether shipment records track both imports and exports together or independently, different queries are used to compute the shipment volume.
+
+## Queries
+
+### Query 1: Independent Imports and Exports
+Use this query when import and export records are managed separately and shipments do not always track both activities.
+
+```sql
+SELECT
     DATE_TRUNC('month', s.latest_event_timestamp) AS month,
     s.origin_city AS hub,
     SUM(COALESCE(ip.cbm, 0)) AS inbound_volume,
@@ -218,12 +256,14 @@ LEFT JOIN export_packages ep ON s.id = ep.export_id  -- Outbound shipments
 WHERE s.latest_event_timestamp IS NOT NULL  
 GROUP BY month, hub
 ORDER BY month DESC, hub;
-*/
-or
+```
 
+### Query 2: Integrated Shipment Tracking
+Use this query when shipment records reliably track both imports and exports.
 
+```sql
 WITH monthly_exports AS (
-  SELECT 
+  SELECT
     DATE_TRUNC('month', e.export_timestamp) AS month,
     e.port_from as hub,
     SUM(ep.cbm) as total_cbm
@@ -233,7 +273,7 @@ WITH monthly_exports AS (
   GROUP BY DATE_TRUNC('month', e.export_timestamp), e.port_from
 ),
 monthly_imports AS (
-  SELECT 
+  SELECT
     DATE_TRUNC('month', i.import_timestamp) AS month,
     i.warehouse as hub,
     SUM(ip.cbm) as total_cbm
@@ -242,22 +282,24 @@ monthly_imports AS (
   WHERE i.import_timestamp IS NOT NULL
   GROUP BY DATE_TRUNC('month', i.import_timestamp), i.warehouse
 )
-SELECT 
+SELECT
   COALESCE(e.month, i.month) as month,
   COALESCE(e.hub, i.hub) as hub,
   COALESCE(e.total_cbm, 0) as export_cbm,
   COALESCE(i.total_cbm, 0) as import_cbm,
   COALESCE(e.total_cbm, 0) + COALESCE(i.total_cbm, 0) as total_cbm
 FROM monthly_exports e
-FULL OUTER JOIN monthly_imports i 
-  ON e.month = i.month 
+FULL OUTER JOIN monthly_imports i
+  ON e.month = i.month
   AND e.hub = i.hub
 WHERE COALESCE(e.month, i.month) IS NOT NULL
 ORDER BY month DESC, hub;
+```
 
+## Output Example
+The query returns shipment volumes in the following JSON format:
 
-
-/*Output*/
+```json
 {
     "success": true,
     "data": [
@@ -277,91 +319,16 @@ ORDER BY month DESC, hub;
         },
         {
             "month": "2025-01-31T18:30:00.000Z",
-            "hub": "2F",
-            "export_cbm": "0",
-            "import_cbm": "85.12400",
-            "total_cbm": "85.12400"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "AMS",
-            "export_cbm": "14.44900",
-            "import_cbm": "0",
-            "total_cbm": "14.44900"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "CNSGH",
-            "export_cbm": "9.36500",
-            "import_cbm": "0",
-            "total_cbm": "9.36500"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "CNSHA",
-            "export_cbm": "0.00100",
-            "import_cbm": "0",
-            "total_cbm": "0.00100"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "HAESUNG",
-            "export_cbm": "0",
-            "import_cbm": "4.02200",
-            "total_cbm": "4.02200"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
             "hub": "ICN",
             "export_cbm": "158.67700",
             "import_cbm": "0",
             "total_cbm": "158.67700"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "JPCHI",
-            "export_cbm": "0.02700",
-            "import_cbm": "0",
-            "total_cbm": "0.02700"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "JPUKB",
-            "export_cbm": "91.52200",
-            "import_cbm": "0",
-            "total_cbm": "91.52200"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "KIX",
-            "export_cbm": "36.63700",
-            "import_cbm": "0",
-            "total_cbm": "36.63700"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "KRPUS",
-            "export_cbm": "339.25000",
-            "import_cbm": "0",
-            "total_cbm": "339.25000"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "NLRTM",
-            "export_cbm": "51.75900",
-            "import_cbm": "0",
-            "total_cbm": "51.75900"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "OUTSIDE",
-            "export_cbm": "0",
-            "import_cbm": "0.49500",
-            "total_cbm": "0.49500"
-        },
-        ...
+        }...
     ]
-    }
+}
+```
+
+
 
 ![image](https://github.com/user-attachments/assets/dcbec013-eb90-4711-9960-20628a694707)
 
@@ -369,9 +336,15 @@ ORDER BY month DESC, hub;
 
 
 ## **List of High-cost shipment - Monthly list of high-cost delivery (only including shipment cost) that have completed onboard last mile delivery within the month**
+# Monthly Shipments Report
 
+## Overview
+This SQL query retrieves and aggregates shipment data for the last three months, including details like shipment ID, customer, origin, destination, transport mode, latest event timestamp, total cost, and currency. The results are grouped by month and ordered by the highest total cost within each month, limited to the top 100 records.
+
+## SQL Query
+```sql
 WITH monthly_shipments AS (
-    SELECT 
+    SELECT
         s.id as shipment_id,
         s.customer,
         s.origin,
@@ -389,7 +362,7 @@ WITH monthly_shipments AS (
     JOIN quotation_schedule_fees qsf ON qs.id = qsf.schedule_id
     WHERE s.latest_event_timestamp >= (CURRENT_DATE - INTERVAL '3 months')
     AND s.latest_event_timestamp < CURRENT_DATE
-    GROUP BY 
+    GROUP BY
         s.id,
         s.customer,
         s.origin,
@@ -400,7 +373,7 @@ WITH monthly_shipments AS (
         dq.quotation_id,
         qsf.currency
 )
-SELECT 
+SELECT
     TO_CHAR(delivery_month, 'YYYY-MM') as month,
     shipment_id,
     customer,
@@ -411,14 +384,14 @@ SELECT
     ROUND(total_cost, 2) as total_cost,
     currency
 FROM monthly_shipments
-ORDER BY 
+ORDER BY
     delivery_month DESC,
     total_cost DESC
 LIMIT 100;
+```
 
-
-/*Output*/
-
+## Output
+```json
 {
     "success": true,
     "data": [
@@ -476,131 +449,117 @@ LIMIT 100;
             "delivery_date": "2025-02-14",
             "total_cost": "12060690.00",
             "currency": "KRW"
-        },
-        {
-            "month": "2025-02",
-            "shipment_id": "523801",
-            "customer": "60YC",
-            "origin": "JPUKB",
-            "destination": "JPKII",
-            "transport_mode": "local delivery",
-            "delivery_date": "2025-02-14",
-            "total_cost": "12060690.00",
-            "currency": "KRW"
-        },
-        {
-            "month": "2025-02",
-            "shipment_id": "523805",
-            "customer": "60YC",
-            "origin": "JPUKB",
-            "destination": "JPKII",
-            "transport_mode": "local delivery",
-            "delivery_date": "2025-02-14",
-            "total_cost": "12060690.00",
-            "currency": "KRW"
-        },
-        {
-            "month": "2025-02",
-            "shipment_id": "523792",
-            "customer": "60YC",
-            "origin": "JPUKB",
-            "destination": "JPKII",
-            "transport_mode": "local delivery",
-            "delivery_date": "2025-02-14",
-            "total_cost": "12060690.00",
-            "currency": "KRW"
-        },
-        ...]
+        }
+    ]
 }
+```
+
+## Explanation
+1. **CTE (`WITH monthly_shipments AS (...)`)**:
+   - Fetches shipment details from the `shipments` table.
+   - Joins multiple related tables (`deliveries`, `delivery_quotations`, `quotation_schedules`, `quotation_schedule_fees`).
+   - Filters shipments from the last three months.
+   - Groups by shipment ID, customer, origin, destination, transport mode, and currency.
+   - Calculates the `total_cost` for each shipment.
+
+2. **Main Query (`SELECT ... FROM monthly_shipments`)**:
+   - Formats `delivery_month` as `YYYY-MM`.
+   - Formats `latest_event_timestamp` as `YYYY-MM-DD`.
+   - Sorts the results by `delivery_month DESC` and `total_cost DESC`.
+   - Limits the output to the top 100 shipments.
+
+
 ![image](https://github.com/user-attachments/assets/60f10a1a-e9e4-43c9-a347-2ac5f89d6ba3)
 
 
 ## //Ratio on freight mode - Monthly ratio of freight modes based on cost, number of POs, and weight. Total ratio including all the shipments and ratio by hub is required.
+# Optimized SQL Query for Monthly Shipment Metrics
 
-try to write fully optimized query
+## Overview
+This query calculates monthly shipment metrics, including purchase order count, shipment count, total weight, and total cost in USD. It also computes the ratio of each metric relative to total and hub-specific values.
+
+## Optimized SQL Query
+```sql
 WITH monthly_metrics AS (
-  SELECT 
-  DATE_TRUNC('month', s.latest_event_timestamp) as month,
-  s.transport_mode,
-  s.origin as hub,
-  COUNT(DISTINCT po.number) as po_count,
-  COUNT(DISTINCT s.id) as shipment_count,
-  SUM(qp.weight) as total_weight,
-  SUM(
-    CASE qsf.currency
-      WHEN 'USD' THEN qsf.cost * qsf.quantity
-      WHEN 'EUR' THEN qsf.cost * qsf.quantity * 1.08  -- Approximate EUR to USD
-      WHEN 'JPY' THEN qsf.cost * qsf.quantity * 0.0067  -- Approximate JPY to USD
-      WHEN 'KRW' THEN qsf.cost * qsf.quantity * 0.00075  -- Approximate KRW to USD
-    END
-  ) as total_cost_usd
-FROM shipments s
-LEFT JOIN deliveries d ON s.delivery_id = d.id
-LEFT JOIN delivery_quotations dq ON d.id = dq.delivery_id
-LEFT JOIN quotations q ON dq.quotation_id = q.id
-LEFT JOIN quotation_packages qp ON q.id = qp.quotation_id
-LEFT JOIN quotation_schedules qs ON q.id = qs.quotation_id
-LEFT JOIN quotation_schedule_fees qsf ON qs.id = qsf.schedule_id
-LEFT JOIN export_package_po_numbers epn ON epn.export_package_id = qp.id
-LEFT JOIN purchase_orders po ON epn.po_number = po.number
-WHERE s.latest_event_timestamp >= '2024-01-01'
-AND s.latest_event_timestamp < '2025-04-01'
-GROUP BY 
-  DATE_TRUNC('month', s.latest_event_timestamp),
-  s.transport_mode,
-  s.origin
+  SELECT
+    DATE_TRUNC('month', s.latest_event_timestamp) AS month,
+    s.transport_mode,
+    s.origin AS hub,
+    COUNT(DISTINCT po.number) AS po_count,
+    COUNT(DISTINCT s.id) AS shipment_count,
+    SUM(qp.weight) AS total_weight,
+    SUM(
+      CASE qsf.currency
+        WHEN 'USD' THEN qsf.cost * qsf.quantity
+        WHEN 'EUR' THEN qsf.cost * qsf.quantity * 1.08
+        WHEN 'JPY' THEN qsf.cost * qsf.quantity * 0.0067
+        WHEN 'KRW' THEN qsf.cost * qsf.quantity * 0.00075
+      END
+    ) AS total_cost_usd
+  FROM shipments s
+  LEFT JOIN deliveries d ON s.delivery_id = d.id
+  LEFT JOIN delivery_quotations dq ON d.id = dq.delivery_id
+  LEFT JOIN quotations q ON dq.quotation_id = q.id
+  LEFT JOIN quotation_packages qp ON q.id = qp.quotation_id
+  LEFT JOIN quotation_schedule_fees qsf ON q.id = qsf.schedule_id
+  LEFT JOIN export_package_po_numbers epn ON epn.export_package_id = qp.id
+  LEFT JOIN purchase_orders po ON epn.po_number = po.number
+  WHERE s.latest_event_timestamp >= '2024-01-01'
+    AND s.latest_event_timestamp < '2025-04-01'
+  GROUP BY
+    DATE_TRUNC('month', s.latest_event_timestamp),
+    s.transport_mode,
+    s.origin
 ),
 monthly_totals AS (
-SELECT 
-  month,
-  SUM(po_count) as total_po_count,
-  SUM(shipment_count) as total_shipment_count,
-  SUM(total_weight) as total_weight,
-  SUM(total_cost_usd) as total_cost_usd
-FROM monthly_metrics
-GROUP BY month
+  SELECT
+    month,
+    SUM(po_count) AS total_po_count,
+    SUM(shipment_count) AS total_shipment_count,
+    SUM(total_weight) AS total_weight,
+    SUM(total_cost_usd) AS total_cost_usd
+  FROM monthly_metrics
+  GROUP BY month
 ),
 hub_totals AS (
-SELECT 
-  month,
-  hub,
-  SUM(po_count) as hub_po_count,
-  SUM(shipment_count) as hub_shipment_count,
-  SUM(total_weight) as hub_weight,
-  SUM(total_cost_usd) as hub_cost_usd
-FROM monthly_metrics
-GROUP BY month, hub
+  SELECT
+    month,
+    hub,
+    SUM(po_count) AS hub_po_count,
+    SUM(shipment_count) AS hub_shipment_count,
+    SUM(total_weight) AS hub_weight,
+    SUM(total_cost_usd) AS hub_cost_usd
+  FROM monthly_metrics
+  GROUP BY month, hub
 )
-
-SELECT 
-mm.month,
-mm.hub,
-mm.transport_mode,
-mm.po_count,
-ROUND(mm.po_count * 100.0 / NULLIF(mt.total_po_count, 0), 2) as po_ratio_total,
-ROUND(mm.po_count * 100.0 / NULLIF(ht.hub_po_count, 0), 2) as po_ratio_hub,
-mm.shipment_count,
-ROUND(mm.shipment_count * 100.0 / NULLIF(mt.total_shipment_count, 0), 2) as shipment_ratio_total,
-ROUND(mm.shipment_count * 100.0 / NULLIF(ht.hub_shipment_count, 0), 2) as shipment_ratio_hub,
-ROUND(mm.total_weight, 2) as total_weight_kg,
-ROUND(mm.total_weight * 100.0 / NULLIF(mt.total_weight, 0), 2) as weight_ratio_total,
-ROUND(mm.total_weight * 100.0 / NULLIF(ht.hub_weight, 0), 2) as weight_ratio_hub,
-ROUND(mm.total_cost_usd, 2) as total_cost_usd,
-ROUND(mm.total_cost_usd * 100.0 / NULLIF(mt.total_cost_usd, 0), 2) as cost_ratio_total,
-ROUND(mm.total_cost_usd * 100.0 / NULLIF(ht.hub_cost_usd, 0), 2) as cost_ratio_hub
+SELECT
+  mm.month,
+  mm.hub,
+  mm.transport_mode,
+  mm.po_count,
+  ROUND(mm.po_count * 100.0 / NULLIF(mt.total_po_count, 0), 2) AS po_ratio_total,
+  ROUND(mm.po_count * 100.0 / NULLIF(ht.hub_po_count, 0), 2) AS po_ratio_hub,
+  mm.shipment_count,
+  ROUND(mm.shipment_count * 100.0 / NULLIF(mt.total_shipment_count, 0), 2) AS shipment_ratio_total,
+  ROUND(mm.shipment_count * 100.0 / NULLIF(ht.hub_shipment_count, 0), 2) AS shipment_ratio_hub,
+  ROUND(mm.total_weight, 2) AS total_weight_kg,
+  ROUND(mm.total_weight * 100.0 / NULLIF(mt.total_weight, 0), 2) AS weight_ratio_total,
+  ROUND(mm.total_weight * 100.0 / NULLIF(ht.hub_weight, 0), 2) AS weight_ratio_hub,
+  ROUND(mm.total_cost_usd, 2) AS total_cost_usd,
+  ROUND(mm.total_cost_usd * 100.0 / NULLIF(mt.total_cost_usd, 0), 2) AS cost_ratio_total,
+  ROUND(mm.total_cost_usd * 100.0 / NULLIF(ht.hub_cost_usd, 0), 2) AS cost_ratio_hub
 FROM monthly_metrics mm
 JOIN monthly_totals mt ON mm.month = mt.month
 JOIN hub_totals ht ON mm.month = ht.month AND mm.hub = ht.hub
 WHERE mm.transport_mode IS NOT NULL
-ORDER BY 
-mm.month DESC,
-mm.hub,
-mm.total_cost_usd DESC;
+ORDER BY
+  mm.month DESC,
+  mm.hub,
+  mm.total_cost_usd DESC;
+```
 
-
-
-
-/*Output*/
+## Sample Output
+```json
 {
     "success": true,
     "data": [
@@ -637,47 +596,29 @@ mm.total_cost_usd DESC;
             "total_cost_usd": "120800.83",
             "cost_ratio_total": "0.01",
             "cost_ratio_hub": "100.00"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "CNSGH",
-            "transport_mode": "courier",
-            "po_count": "2",
-            "po_ratio_total": "0.05",
-            "po_ratio_hub": "33.33",
-            "shipment_count": "2",
-            "shipment_ratio_total": "0.00",
-            "shipment_ratio_hub": "66.67",
-            "total_weight_kg": "6.00",
-            "weight_ratio_total": "0.00",
-            "weight_ratio_hub": "0.84",
-            "total_cost_usd": "299.00",
-            "cost_ratio_total": "0.00",
-            "cost_ratio_hub": "56.52"
-        },
-        {
-            "month": "2025-01-31T18:30:00.000Z",
-            "hub": "CNSGH",
-            "transport_mode": "hand carry",
-            "po_count": "4",
-            "po_ratio_total": "0.10",
-            "po_ratio_hub": "66.67",
-            "shipment_count": "1",
-            "shipment_ratio_total": "0.00",
-            "shipment_ratio_hub": "33.33",
-            "total_weight_kg": "710.00",
-            "weight_ratio_total": "0.00",
-            "weight_ratio_hub": "99.16",
-            "total_cost_usd": "230.00",
-            "cost_ratio_total": "0.00",
-            "cost_ratio_hub": "43.48"
-        },
-        ...]
+        }
+    ]
 }
+```
+
+## Explanation
+- **`monthly_metrics` CTE**: Computes monthly aggregated shipment metrics.
+- **`monthly_totals` CTE**: Summarizes total counts and values per month.
+- **`hub_totals` CTE**: Aggregates totals for each hub per month.
+- **Final Query**: Joins all CTEs and calculates percentages to compare shipments, weight, and cost across hubs and transport modes.
+
+## Use Cases
+- Track shipment trends over time.
+- Compare performance across different hubs and transport modes.
+- Monitor costs in a unified currency (USD).
+- Optimize logistics and resource allocation.
+
+
 ![image](https://github.com/user-attachments/assets/bf53a258-b098-4a04-93d1-2e40db3c8c11)
 
 
 ## // Ratio of key hub vs non-key hub (based on cost, number of POs, and weight) - Monthly ratio of completed last-mile delivery at key hubs vs non-key hubs based on cost, number of POs, and weight.
+```
  WITH delivery_metrics AS (
   SELECT 
     DATE_TRUNC('month', s.latest_event_timestamp) as month,
@@ -789,7 +730,8 @@ ORDER BY
   dm.hub_type,
   dm.total_cost_usd DESC;
 
-
+```
+```
 /*Output*/
 {
     "success": true,
@@ -950,11 +892,13 @@ ORDER BY
         },
         ...]
 }
+```
 
 ![image](https://github.com/user-attachments/assets/8432b1d3-9801-475c-8912-c34e25e4fa8e)
 
 
 ## //Consolidation Rate - Number of POs shipped / Number of shipments for air freight, sea freight, and trucking.
+```
  WITH storage_durations AS (
     SELECT 
         DATE_TRUNC('month', de.event_timestamp) as month,
@@ -1017,11 +961,13 @@ HAVING COUNT(DISTINCT shipment_id) > 0
 ORDER BY 
     avg_storage_days DESC
 LIMIT 100;
+```
 
 ![image](https://github.com/user-attachments/assets/5b6e05e1-cb55-4123-af34-0caf43c6e29b)
 ![image](https://github.com/user-attachments/assets/ae4b9bde-2a13-4691-9a31-6b05c880d496)
 
 /*Output*/
+```
 {
     "success": true,
     "data": [
@@ -1096,11 +1042,18 @@ LIMIT 100;
         ...]
 }
 
-
+```
 
 ## //Last mile delivery
+# Last Mile Deliveries SQL Query
+
+## Overview
+This SQL query calculates key metrics for last-mile deliveries, filtering shipments based on the transport mode and delivery time range.
+
+## Query
+```sql
 WITH last_mile_deliveries AS (
-  SELECT 
+  SELECT
     s.id as shipment_id,
     s.customer,
     s.origin,
@@ -1112,13 +1065,13 @@ WITH last_mile_deliveries AS (
     EXTRACT(EPOCH FROM (s.latest_event_timestamp - s.earliest_event_timestamp))/3600/24 as delivery_days,
     s.forwarder
   FROM shipments s
-  WHERE 
+  WHERE
     s.transport_mode = 'local delivery'
-    AND s.earliest_event_timestamp IS NOT NULL 
+    AND s.earliest_event_timestamp IS NOT NULL
     AND s.latest_event_timestamp IS NOT NULL
     AND s.earliest_event_timestamp >= '2025-01-01'
 )
-SELECT 
+SELECT
   customer,
   forwarder,
   COUNT(*) as total_deliveries,
@@ -1132,9 +1085,10 @@ SELECT
 FROM last_mile_deliveries
 GROUP BY customer, forwarder, origin, destination
 ORDER BY total_deliveries DESC;
+```
 
-
-/*Output*/
+## Sample Output
+```json
 {
     "success": true,
     "data": [
@@ -1163,54 +1117,6 @@ ORDER BY total_deliveries DESC;
             "destination": "KRPUS"
         },
         {
-            "customer": "6549",
-            "forwarder": null,
-            "total_deliveries": "292",
-            "avg_delivery_days": "9.5",
-            "min_delivery_days": "1.3",
-            "max_delivery_days": "39.7",
-            "same_day_delivery_pct": "0.0",
-            "within_2days_pct": "71.6",
-            "origin": null,
-            "destination": "KRPUS"
-        },
-        {
-            "customer": "6549",
-            "forwarder": null,
-            "total_deliveries": "69",
-            "avg_delivery_days": "36.5",
-            "min_delivery_days": "12.9",
-            "max_delivery_days": "38.0",
-            "same_day_delivery_pct": "0.0",
-            "within_2days_pct": "0.0",
-            "origin": null,
-            "destination": "KRYOS"
-        },
-        {
-            "customer": "6549",
-            "forwarder": "Fuji Global",
-            "total_deliveries": "37",
-            "avg_delivery_days": "10.7",
-            "min_delivery_days": "0.0",
-            "max_delivery_days": "47.2",
-            "same_day_delivery_pct": "18.9",
-            "within_2days_pct": "21.6",
-            "origin": null,
-            "destination": "KRPUS"
-        },
-        {
-            "customer": "60CL",
-            "forwarder": "Fuji Global",
-            "total_deliveries": "20",
-            "avg_delivery_days": "13.1",
-            "min_delivery_days": "0.0",
-            "max_delivery_days": "50.3",
-            "same_day_delivery_pct": "40.0",
-            "within_2days_pct": "45.0",
-            "origin": null,
-            "destination": "KRBNP"
-        },
-        {
             "customer": "60YC",
             "forwarder": null,
             "total_deliveries": "19",
@@ -1221,9 +1127,11 @@ ORDER BY total_deliveries DESC;
             "within_2days_pct": "100.0",
             "origin": "JPUKB",
             "destination": "JPKII"
-        },
-        ...]
+        }
+    ]
 }
+```
+
 
 ![image](https://github.com/user-attachments/assets/cd8fe34a-ad76-40a6-b063-23c7a21f8413)
 
